@@ -1,6 +1,7 @@
-// TODO: add matrix multiplication for verification of correctness
+#define EPS 1e-15
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -38,6 +39,47 @@ void eye(Matrix &M)
   }
 }
 int sign(float x) { return (x > 0) ? 1 : ((x < 0) ? -1 : 0); }
+
+struct GivensRotation {
+  double _cos, _sin;
+  int row_i, row_j;
+
+  GivensRotation(double a, double b, int row_i, int row_j)
+      : row_i(row_i), row_j(row_j)
+  {
+    if (abs(a) < EPS) {
+      _cos = 1.0;
+      _sin = 0.0;
+    }
+    else if (abs(b) < EPS) {
+      _cos = 0.0;
+      _sin = 1.0;
+    }
+    else {
+      double r = sqrt(a * a + b * b);
+      _cos = a / r;
+      _sin = b / r;
+    }
+  }
+
+  void apply_left(Matrix &M)
+  {
+    for (int j = 0; j < M[0].size(); j++) {
+      double tmp = _cos * M[row_i][j] - _sin * M[row_j][j];
+      M[row_j][j] = _sin * M[row_i][j] + _cos * M[row_j][j];
+      M[row_i][j] = tmp;
+    }
+  }
+  void apply_right(Matrix &M)
+  {
+    for (int j = 0; j < M.size(); j++) {
+      double tmp = _cos * M[j][row_i] - _sin * M[j][row_j];
+      M[row_j][j] = _sin * M[j][row_i] + _cos * M[j][row_j];
+      M[row_i][j] = tmp;
+    }
+  }
+};
+
 double norm(Vector x)
 {
   double norm_x = 0.0;
@@ -46,6 +88,33 @@ double norm(Vector x)
   }
   norm_x = sqrt(norm_x);
   return norm_x;
+}
+
+Matrix mmult(Matrix A, Matrix B)
+{
+  // NOTE: slow implementation of matrix multiplication
+  int rows_A = A.size();
+  int cols_A = A[0].size();
+
+  int rows_B = B.size();
+  int cols_B = B[0].size();
+
+  if (cols_A != rows_B) {
+    cout << "ERROR: Matrix sizes do not match" << endl;
+    cout << "A: " << rows_A << "x" << cols_A << endl;
+    cout << "B: " << rows_B << "x" << cols_B << endl;
+    exit(1);
+  }
+  Matrix C(rows_A, Vector(cols_B, 0.0));
+
+  for (int i = 0; i < rows_A; i++) {
+    for (int j = 0; j < cols_A; j++) {
+      for (int k = 0; k < cols_B; k++) {
+        C[i][k] = C[i][k] + A[i][j] * B[j][k];
+      }
+    }
+  }
+  return C;
 }
 
 Vector housholder_reflections(const Vector &x)
@@ -223,21 +292,72 @@ void display(const Matrix &A, double eps = 1e-10)
   cout << "\n";
 }
 
+struct SVD {
+  Matrix U;
+  Matrix S;
+  Matrix V;
+
+  SVD(Matrix U, Matrix S, Matrix V) : U(U), S(S), V(V) {};
+};
+
+SVD Golub_Reisch_SVD(Matrix A, double eps)
+{
+
+  Matrix B = A;
+  int rows = A.size();
+  int columns = A[0].size();
+  Matrix U(rows, Vector(rows, 0.0));
+  Matrix S(columns, Vector(columns, 0.0));
+  Matrix V(columns, Vector(columns, 0.0));
+
+  bidiagonalize(B, U, V);
+  display(B);
+  while (true) {
+
+    for (int i = 0; i < columns - 1; i++) {
+      if (abs(B[i][i + 1]) < eps * abs(B[i][i] + B[i + 1][i + 1])) {
+        B[i][i + 1] = 0.0;
+      }
+    }
+    // performing block splitting
+    int p = 0;
+    while (p < columns - 1 && abs(B[p][p + 1]) < eps) {
+      p++; // Count converged superdiagonals from left
+    }
+
+    int q = 0;
+    for (int i = columns - 2; i >= p; i--) {
+      if (abs(B[i][i + 1]) < eps) {
+        q++; // Count converged superdiagonals from right
+      }
+      else {
+        break;
+      }
+    }
+    cout << "(p, q)" << endl;
+    cout << "(" << p << "," << q << ")" << endl;
+    if (p + q >= columns - 1) {
+      for (int i = 0; i < rows; i++) {
+        S[i][i] = B[i][i];
+      }
+      return SVD(U, S, V);
+    }
+
+    // TODO: Add Golub-Kahan QR step here
+    // For now, break to avoid infinite loop
+    break;
+  }
+
+  return SVD(U, S, V);
+}
+
 int main(int argc, char *argv[])
 {
   Matrix A = load_data("input.txt");
   int rows = A.size();
   int columns = A[0].size();
-  Matrix U(rows, Vector(rows, 0.0));
+  SVD svd_res = Golub_Reisch_SVD(A, 1e-4);
+  display(svd_res.S);
 
-  Matrix V(columns, Vector(columns, 0.0));
-
-  bidiagonalize(A, U, V);
-  display(A);
-
-  cout << endl;
-  display(U);
-  cout << endl;
-  display(V);
   return 0;
 }
