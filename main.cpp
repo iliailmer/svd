@@ -1,4 +1,5 @@
 #define EPS 1e-15
+#define MAX_ITER 500
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -11,6 +12,44 @@ using namespace std;
 
 using Matrix = vector<vector<double>>;
 using Vector = vector<double>;
+void display(const Matrix &A, double eps = 1e-10)
+{
+  int m = A.size();
+  int n = A[0].size();
+
+  // Find the width needed for each column
+  vector<int> col_widths(n, 0);
+  for (int j = 0; j < n; j++) {
+    for (int i = 0; i < m; i++) {
+      ostringstream oss;
+      if (abs(A[i][j]) < eps) {
+        oss << "0";
+      }
+      else {
+        oss << fixed << setprecision(4) << A[i][j];
+      }
+      col_widths[j] = max(col_widths[j], (int)oss.str().length());
+    }
+  }
+
+  // Print with proper alignment
+  for (int i = 0; i < m; i++) {
+    cout << "[ ";
+    for (int j = 0; j < n; j++) {
+      if (abs(A[i][j]) < eps) {
+        cout << setw(col_widths[j]) << "0";
+      }
+      else {
+        cout << setw(col_widths[j]) << fixed << setprecision(4) << A[i][j];
+      }
+      if (j < n - 1)
+        cout << "  ";
+    }
+    cout << " ]\n";
+  }
+  cout << "\n";
+}
+
 Matrix load_data(const string &path_to_input)
 {
   string line;
@@ -38,7 +77,7 @@ void eye(Matrix &M)
     }
   }
 }
-int sign(float x) { return (x > 0) ? 1 : ((x < 0) ? -1 : 0); }
+int sign(float x) { return (x >= 0) ? 1 : ((x < 0) ? -1 : 0); }
 
 struct GivensRotation {
   double _cos, _sin;
@@ -47,35 +86,44 @@ struct GivensRotation {
   GivensRotation(double a, double b, int row_i, int row_j)
       : row_i(row_i), row_j(row_j)
   {
-    if (abs(a) < EPS) {
+    if (abs(b) < EPS) {
       _cos = 1.0;
       _sin = 0.0;
     }
-    else if (abs(b) < EPS) {
+    else if (abs(a) < EPS) {
       _cos = 0.0;
       _sin = 1.0;
     }
     else {
-      double r = sqrt(a * a + b * b);
-      _cos = a / r;
-      _sin = b / r;
+      if (abs(a) > abs(b)) {
+        float t = b / a;
+        float u = sign(a) * sqrt(1 + t * t);
+        _cos = 1 / u;
+        _sin = _cos * t;
+      }
+      else {
+        float t = a / b;
+        float u = sign(b) * sqrt(1 + t * t);
+        _sin = 1 / u;
+        _cos = t / u;
+      }
     }
   }
 
   void apply_left(Matrix &M)
   {
     for (int j = 0; j < M[0].size(); j++) {
-      double tmp = _cos * M[row_i][j] - _sin * M[row_j][j];
-      M[row_j][j] = _sin * M[row_i][j] + _cos * M[row_j][j];
+      double tmp = _cos * M[row_i][j] + _sin * M[row_j][j];
+      M[row_j][j] = -_sin * M[row_i][j] + _cos * M[row_j][j];
       M[row_i][j] = tmp;
     }
   }
   void apply_right(Matrix &M)
   {
     for (int j = 0; j < M.size(); j++) {
-      double tmp = _cos * M[j][row_i] - _sin * M[j][row_j];
-      M[row_j][j] = _sin * M[j][row_i] + _cos * M[j][row_j];
-      M[row_i][j] = tmp;
+      double tmp = _cos * M[j][row_i] + _sin * M[j][row_j];
+      M[j][row_j] = -_sin * M[j][row_i] + _cos * M[j][row_j];
+      M[j][row_i] = tmp;
     }
   }
 };
@@ -242,7 +290,6 @@ void bidiagonalize(Matrix &A, Matrix &U, Matrix &V)
       apply_householder_right(A, v, i, i + 1);
     }
   }
-  U = transpose(U);
 }
 
 void display_simple(Matrix A)
@@ -254,44 +301,6 @@ void display_simple(Matrix A)
     cout << "\n";
   }
 }
-void display(const Matrix &A, double eps = 1e-10)
-{
-  int m = A.size();
-  int n = A[0].size();
-
-  // Find the width needed for each column
-  vector<int> col_widths(n, 0);
-  for (int j = 0; j < n; j++) {
-    for (int i = 0; i < m; i++) {
-      ostringstream oss;
-      if (abs(A[i][j]) < eps) {
-        oss << "0";
-      }
-      else {
-        oss << fixed << setprecision(4) << A[i][j];
-      }
-      col_widths[j] = max(col_widths[j], (int)oss.str().length());
-    }
-  }
-
-  // Print with proper alignment
-  for (int i = 0; i < m; i++) {
-    cout << "[ ";
-    for (int j = 0; j < n; j++) {
-      if (abs(A[i][j]) < eps) {
-        cout << setw(col_widths[j]) << "0";
-      }
-      else {
-        cout << setw(col_widths[j]) << fixed << setprecision(4) << A[i][j];
-      }
-      if (j < n - 1)
-        cout << "  ";
-    }
-    cout << " ]\n";
-  }
-  cout << "\n";
-}
-
 struct SVD {
   Matrix U;
   Matrix S;
@@ -303,22 +312,32 @@ struct SVD {
 SVD Golub_Reisch_SVD(Matrix A, double eps)
 {
 
+  int iter_count = 0;
   Matrix B = A;
   int rows = A.size();
   int columns = A[0].size();
   Matrix U(rows, Vector(rows, 0.0));
-  Matrix S(columns, Vector(columns, 0.0));
+  Matrix S(rows, Vector(columns, 0.0));
   Matrix V(columns, Vector(columns, 0.0));
 
   bidiagonalize(B, U, V);
   display(B);
   while (true) {
+    iter_count += 1;
+    if (iter_count > MAX_ITER) {
+      break;
+    }
+
+    cout << "\n=== Iteration " << iter_count << " ===" << endl;
+    cout << "B at start:" << endl;
+    display(B);
 
     for (int i = 0; i < columns - 1; i++) {
-      if (abs(B[i][i + 1]) < eps * abs(B[i][i] + B[i + 1][i + 1])) {
+      if (abs(B[i][i + 1]) <= eps * (abs(B[i][i]) + abs(B[i + 1][i + 1]))) {
         B[i][i + 1] = 0.0;
       }
     }
+
     // performing block splitting
     int p = 0;
     while (p < columns - 1 && abs(B[p][p + 1]) < eps) {
@@ -334,18 +353,84 @@ SVD Golub_Reisch_SVD(Matrix A, double eps)
         break;
       }
     }
-    cout << "(p, q)" << endl;
-    cout << "(" << p << "," << q << ")" << endl;
+
+    cout << "p = " << p << ", q = " << q << endl;
+    cout << "Block size = " << (columns - p - q) << endl;
+
     if (p + q >= columns - 1) {
-      for (int i = 0; i < rows; i++) {
+      cout << "CONVERGED!" << endl;
+      for (int i = 0; i < columns; i++) {
+        S[i][i] = abs(B[i][i]);
+      }
+      return SVD(U, S, V);
+    }
+    for (int i = p; i < columns - q - 1; i++) {
+      if (abs(B[i][i]) < eps) {
+        // apply givens rotations
+        for (int k = i; k < min(columns - 1, rows - 1); k++) {
+          // Zero out B[k][k+1] using B[k+1][k+1]
+          if (k + 1 < columns) {
+            GivensRotation rot(B[k + 1][k + 1], B[k][k + 1], k, k + 1);
+            rot.apply_right(B);
+            rot.apply_right(V);
+          }
+        }
+        break;
+      }
+    }
+
+    // wilkinson shift
+
+    int block_size = columns - p - q;
+
+    if (block_size <= 1) {
+      // Block is already converged
+      for (int i = 0; i < min(rows, columns); i++) {
         S[i][i] = B[i][i];
       }
       return SVD(U, S, V);
     }
+    float alpha = B[columns - q - 2][columns - q - 2];
+    float beta = B[columns - q - 2][columns - q - 1];
+    float gamma = B[columns - q - 1][columns - q - 1];
 
-    // TODO: Add Golub-Kahan QR step here
-    // For now, break to avoid infinite loop
-    break;
+    Matrix C(2, Vector(2, 0.0));
+    C[0][0] = alpha * alpha + beta * beta;
+    C[0][1] = beta * gamma;
+    C[1][0] = beta * gamma;
+    C[1][1] = gamma * gamma;
+
+    double a = C[0][0];
+    double b = C[0][1];
+    double c = C[1][1];
+
+    double d = (a - c) / 2.0;
+    double mu = c - sign(d) * b * b / (abs(d) + sqrt(d * d + b * b));
+    int k = p;
+    alpha = B[k][k] * B[k][k] - mu;
+    beta = B[k][k] * B[k][k + 1];
+    for (int k = p; k < columns - q - 1; k++) {
+      // givens rotations
+      GivensRotation rot_1 = GivensRotation(alpha, beta, k, k + 1);
+      rot_1.apply_right(B);
+      rot_1.apply_right(V);
+
+      alpha = B[k][k];
+      beta = B[k + 1][k];
+
+      GivensRotation rot_2 = GivensRotation(alpha, beta, k, k + 1);
+      rot_2.apply_left(B);
+      rot_2.apply_left(U);
+
+      if (k < columns - q - 2) {
+
+        alpha = B[k][k + 1];
+        beta = B[k][k + 2];
+      }
+    }
+
+    cout << "B at end of iteration:" << endl;
+    display(B);
   }
 
   return SVD(U, S, V);
@@ -353,11 +438,21 @@ SVD Golub_Reisch_SVD(Matrix A, double eps)
 
 int main(int argc, char *argv[])
 {
-  Matrix A = load_data("input.txt");
+  if (argc != 2) {
+    cout << "Usage: " << argv[0] << " <input_file>" << endl;
+    return 1;
+  }
+
+  Matrix A = load_data(argv[1]);
   int rows = A.size();
   int columns = A[0].size();
   SVD svd_res = Golub_Reisch_SVD(A, 1e-4);
-  display(svd_res.S);
+
+  // restore original
+  Matrix A_restored;
+  A_restored = mmult(svd_res.S, svd_res.V);
+  A_restored = mmult(svd_res.U, A_restored);
+  display(A_restored);
 
   return 0;
 }
