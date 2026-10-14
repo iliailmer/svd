@@ -36,3 +36,8 @@
 *.out
 *.app
 
+
+# Local build outputs
+/app
+/svd
+/test_givens
