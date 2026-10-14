@@ -1,2 +1,2 @@
-clang++ -std=c++17 ./main.cpp -o app
+clang++ -std=c++23 ./main.cpp -o app
 ./app input.txt
